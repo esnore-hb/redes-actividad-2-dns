@@ -1,9 +1,17 @@
 # DNS Resolver
 
-redes actvidad 2 dns
+No olvidar colocar un ambiente de Python con `venv` y luego instalar los
+`requirements.txt`.
+
+Ejecutar el programa:
+
+```bash
+python resolver.py
+```
 
 Probar nuestro DNS Resolver:
 
 ```bash
-dig -p 53 1.1.1.1 example.com
+# Pregunta automaticamente por 127.0.0.53 en localhost
+dig -p8000 example.com
 ```

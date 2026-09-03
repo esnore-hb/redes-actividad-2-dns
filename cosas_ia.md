@@ -1,0 +1,1 @@
+como conectar mi terminal a ubuntu

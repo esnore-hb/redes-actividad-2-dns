@@ -1,24 +1,39 @@
 import socket
+from collections import Counter, deque
 
 from dnslib import DNSRecord, QTYPE
 
-# IP_VM = "13.8.0.5"
-#IP_VM = "127.0.0.53"
-IP_VM= "127.0.0.1"
-DNS = "1.1.1.1"
+IP_VM = "127.0.0.53"
 ROOT_IP = "198.41.0.4"
-# DNS = "1.0.0.1"
-# DNS = "8.8.8.8"
-# DNS = "8.8.4.4"
 port = 8000
 server_address = (IP_VM, port)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(server_address)
-print("esperando...")
+DEBUG = True
+HISTORIAL_MAXLEN = 20
+TOP_N = 3
+
+historial_consultas: deque[str] = deque(maxlen=HISTORIAL_MAXLEN)
+respuestas_guardadas: dict[str, bytes] = {}
 
 
-# funcion para enviar mensaje DNS a servidor DNS y recibir respuesta
-def consultar(mensaje_consulta: bytes, ip_addr: str) -> bytes:
+def dominios_mas_repetidos() -> set[str]:
+	conteo = Counter(historial_consultas)
+	return {dominio for dominio, _ in conteo.most_common(TOP_N)}
+
+
+def debug_print(msg: str) -> None:
+	if DEBUG:
+		print(f"[DEBUG] {msg}")
+
+
+def resolver(mensaje_consulta: bytes, ip_addr=ROOT_IP, ns_nombre=".") -> bytes:
+	nombre_dominio = str(DNSRecord.parse(mensaje_consulta).q.qname)
+
+	debug_print(
+		f"Consultando '{nombre_dominio}' a '{ns_nombre}' con dirección IP '{ip_addr}'"
+	)
+
 	dns_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 	try:
 		dns_socket.settimeout(3)
@@ -27,55 +42,71 @@ def consultar(mensaje_consulta: bytes, ip_addr: str) -> bytes:
 		return data
 	except socket.timeout:
 		return b""
-	finally:
-		dns_socket.close()
+	dns_socket.close()
+
+	d: DNSRecord = DNSRecord.parse(data)
+	for rr in d.rr:
+		if QTYPE[rr.rtype] == "A":
+			debug_print(f"Respuesta obtenida desde {ip_addr}: {nombre_dominio} -> {str(rr.rdata)}")
+			return data
+
+	ns_names = [str(auth.rname) for auth in d.auth if QTYPE[auth.rtype] == "NS"]
+	if ns_names:
+		ns_targets = [str(auth.rdata) for auth in d.auth if QTYPE[auth.rtype] == "NS"]
+		siguiente_ns_nombre = ns_targets[0] if ns_targets else ns_names[0]
+
+		additional_ips = [str(ar.rdata) for ar in d.ar if QTYPE[ar.rtype] == "A"]
+		if additional_ips:
+			return resolver(mensaje_consulta, additional_ips[0], siguiente_ns_nombre)
+		else:
+			ns_domain = str(siguiente_ns_nombre)  # nombre del NS a resolver
+			ns_query = DNSRecord.question(ns_domain).pack()
+
+			debug_print(f"No hay IP adicional para '{siguiente_ns_nombre}', resolviendo su IP primero")
+			ns_response = resolver(ns_query, ROOT_IP, ".")
+			if not ns_response:
+				return b""
+
+			ns_record = DNSRecord.parse(ns_response)
+			ns_ip = None
+			for rr in ns_record.rr:
+				if QTYPE[rr.rtype] == "A":
+					ns_ip = str(rr.rdata)
+					break
+
+			if ns_ip is None:
+				return b""
+
+			return resolver(mensaje_consulta, ns_ip, ns_domain)
+
+	return b""
 
 
-# funcion que resuelve el dominio siguiendo la jerarquia desde la raiz
-def resolver(mensaje_consulta: bytes, ip_addr=ROOT_IP) -> bytes:
+def resolver_con_cache(mensaje_consulta: bytes) -> bytes:
+	nombre_dominio = str(DNSRecord.parse(mensaje_consulta).q.qname)
 
-	print("(debug) consultando a", ip_addr)  # Debug
+	top_dominios = dominios_mas_repetidos()
 
-	# a) enviamos la consulta al name server de turno
-	respuesta = consultar(mensaje_consulta, ip_addr)
-	if not respuesta:
-		return b""  # timeout
+	if nombre_dominio in top_dominios and nombre_dominio in respuestas_guardadas:
+		debug_print(f"Usando CACHÉ para '{nombre_dominio}' (top {TOP_N} más consultados)")
+		respuesta = respuestas_guardadas[nombre_dominio]
+		nueva_respuesta = DNSRecord.parse(respuesta)
+		nueva_respuesta.header.id = DNSRecord.parse(mensaje_consulta).header.id
+		respuesta = nueva_respuesta.pack()
+	else:
+		debug_print(f"'{nombre_dominio}' no está en caché, resolviendo desde cero")
+		respuesta = resolver(mensaje_consulta)
+		if respuesta:
+			respuestas_guardadas[nombre_dominio] = respuesta
 
-	d = DNSRecord.parse(respuesta)
+	historial_consultas.append(nombre_dominio)
 
-	# b) si hay algun registro tipo A en Answer, terminamos
-	answer_A = [rr for rr in d.rr if rr.rtype == QTYPE.A]
-	if answer_A:
-		return respuesta  # bytes crudos, para responderle a dig
-
-	# c) si hay registros NS en Authority, nos estan delegando
-	ns_records = [rr for rr in d.auth if rr.rtype == QTYPE.NS]
-	if not ns_records:
-		# d) cualquier otra cosa (CNAME, SOA, vacio) se ignora
-		return b""
-
-	# c.i) si el glue viene en Additional, saltamos a esa IP
-	glue = [rr for rr in d.ar if rr.rtype == QTYPE.A]
-	if glue:
-		return resolver(mensaje_consulta, str(glue[0].rdata))
-
-	# c.ii) sin glue: resolvemos primero la IP del name server
-	nombre_ns = str(ns_records[0].rdata)
-	print("(debug) sin glue, resolviendo IP de", nombre_ns)  # Debug
-	sub_respuesta = resolver(DNSRecord.question(nombre_ns).pack())
-	if not sub_respuesta:
-		return b""
-	sub = DNSRecord.parse(sub_respuesta)
-	ips_ns = [rr for rr in sub.rr if rr.rtype == QTYPE.A]
-	if not ips_ns:
-		return b""
-	return resolver(mensaje_consulta, str(ips_ns[0].rdata))
+	return respuesta
 
 
-# recibir consulta del cliente, resolverla y responder
 while True:
 
 	data, addr = sock.recvfrom(4096)
-	respuesta = resolver(data)
-	if respuesta:
-		sock.sendto(respuesta, addr)
+	ans = resolver_con_cache(data)
+	if ans:
+		sock.sendto(ans, addr)

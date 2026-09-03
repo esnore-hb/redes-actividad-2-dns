@@ -4,15 +4,15 @@ from collections import Counter, deque
 from dnslib import DNSRecord, QTYPE
 
 IP_VM = "127.0.0.53"
-ROOT_IP = "198.41.0.4"
+ROOT_IP = "1.0.0.1"
 port = 8000
 server_address = (IP_VM, port)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(server_address)
 DEBUG = True
-HISTORIAL_MAXLEN = 20
-TOP_N = 3
 
+TOP_N = 3
+HISTORIAL_MAXLEN = 20
 historial_consultas: deque[str] = deque(maxlen=HISTORIAL_MAXLEN)
 respuestas_guardadas: dict[str, bytes] = {}
 

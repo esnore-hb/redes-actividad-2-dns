@@ -110,3 +110,27 @@ while True:
 	ans = resolver_con_cache(data)
 	if ans:
 		sock.sendto(ans, addr)
+
+""" --- Experimentos
+[DEBUG] 'www.webofscience.com.' no está en caché, resolviendo desde cero
+[DEBUG] Consultando 'www.webofscience.com.' a '.' con dirección IP '198.41.0.4'
+[DEBUG] Consultando 'www.webofscience.com.' a 'l.gtld-servers.net.' con dirección IP '192.41.162.30'
+[DEBUG] Consultando 'www.webofscience.com.' a 'ns-342.awsdns-42.com.' con dirección IP '205.251.193.86'
+[DEBUG] No hay IP adicional para 'ns-1010.awsdns-62.net.', resolviendo su IP primero
+[DEBUG] Consultando 'ns-1010.awsdns-62.net.' a '.' con dirección IP '198.41.0.4'
+[DEBUG] Consultando 'ns-1010.awsdns-62.net.' a 'm.gtld-servers.net.' con dirección IP '192.55.83.30'
+[DEBUG] Consultando 'ns-1010.awsdns-62.net.' a 'g-ns-192.awsdns-62.net.' con dirección IP '205.251.192.192'
+[DEBUG] Respuesta obtenida desde 205.251.192.192: ns-1010.awsdns-62.net. -> 205.251.195.242
+[DEBUG] Consultando 'www.webofscience.com.' a 'ns-1010.awsdns-62.net.' con dirección IP '205.251.195.242'
+[DEBUG] No hay IP adicional para 'ns-1010.awsdns-62.net.', resolviendo su IP primero
+
+`dig -p8000 @127.0.0.53 www.webofscience.com`
+El programa falla al caer en un ciclo eterno, dado que siempre toma la primera respuesta que encuentra.
+
+`dig -p8000 @127.0.0.53 www.cc4303.bachmann.cl`
+Lo mismo sucede
+
+Realice varias consultas a un mismo dominio y a través del modo debug vea a qué Name Servers y direcciones IP le pregunta su resolver en cada consulta. ¿Son siempre los mismos Name Servers? ¿Por qué cree usted que sucede esto? Anote las respuestas a estas preguntas en su informe.
+Esto porque el DNS quiere aligerar su pega, y te dirige al que menos este ocupado,
+o que esté mas cerca tuyo. Se basa en el fundamento de ser redundante.
+"""
